@@ -82,3 +82,41 @@ class InvertResponse(BaseModel):
     result: float = Field(description="代入待求值后，按目标单位表示的实际结果")
     result_unit: str = Field(description="归一化后的目标单位")
     dimension: str = Field(description="结果量纲，如 [length] / [time]；无量纲为 dimensionless")
+
+
+class KnownDimensionVariable(BaseModel):
+    unit: str = Field(min_length=1, description="已知变量的单位：受支持的单个单位（不接受 K/degC/degF）")
+
+
+class InferDimensionRequest(BaseModel):
+    expression: str = Field(
+        min_length=1,
+        description="算式：数字、变量、括号、一元正负与 + - * /；待推断变量须出现",
+        examples=["d / t"],
+    )
+    variables: dict[str, KnownDimensionVariable] = Field(
+        default_factory=dict, description="已知变量名 -> {unit}（只给单位，不需要数值）"
+    )
+    unknown: str = Field(
+        min_length=1,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+        description="待推断变量名：合法标识符，须在算式中出现（可多次）且不与已知变量重名",
+    )
+    target_unit: str = Field(
+        min_length=1,
+        description="期望结果的单位式（沿用求值接口语法，可带括号与整数幂；不接受 K/degC/degF）",
+        examples=["m/s"],
+    )
+
+
+class DimensionExponents(BaseModel):
+    length: int = Field(description="长度指数（m）")
+    time: int = Field(description="时间指数（s）")
+    mass: int = Field(description="质量指数（kg）")
+    delta_temperature: int = Field(description="温差指数（delta_K）")
+
+
+class InferDimensionResponse(BaseModel):
+    name: str = Field(description="待推断变量名")
+    unit: str = Field(description="规范单位式，由 m、s、kg、delta_K 组成；无量纲为 1")
+    exponents: DimensionExponents = Field(description="四个基本量纲（长度、时间、质量、温差）上的整数指数")

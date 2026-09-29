@@ -37,6 +37,14 @@ DELTA_OF_ABSOLUTE = {"K": "delta_K", "degC": "delta_degC", "degF": "delta_degF"}
 
 TEMPERATURE_DIM = ureg.Unit("K").dimensionality
 
+# 静态量纲推断使用的四个基本量纲（同时兼容 Pint dimensionality 的两种键写法）。
+_BASE_DIM_KEYS = (
+    ("[length]", "length"),
+    ("[time]", "time"),
+    ("[mass]", "mass"),
+    ("[temperature]", "temperature"),
+)
+
 
 # ---------------------------------------------------------------------------
 # 绝对温度仿射换算（以开尔文为中转）
@@ -60,6 +68,30 @@ def kelvin_to_absolute(kelvin: float, unit: str) -> float:
     if unit == "degF":
         return (kelvin - 273.15) * 9.0 / 5.0 + 32.0
     raise ValueError(f"不是绝对温度单位: {unit}")
+
+
+def base_exponents(unit: str) -> tuple[int, int, int, int]:
+    """返回单位在长度、时间、质量、温差四个基本量纲上的整数指数。
+
+    仅用于静态量纲推断：绝对温度单位（K/degC/degF）不允许出现在该接口中，
+    这里的“温度”指数是温差量纲（delta_K 与 K 同量纲）。
+    """
+    dims = ureg.Unit(unit).dimensionality
+    return tuple(
+        int(dims.get(key, dims.get(alt, 0))) for key, alt in _BASE_DIM_KEYS
+    )
+
+
+# 单位式词法中“标识符”形态的 token；用于在原始单位文本里定位绝对温度单位。
+_UNIT_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def find_absolute_unit(raw: str) -> tuple[str, int] | None:
+    """在原始单位文本中查找 K/degC/degF token（整体匹配，K 不匹配 km 等）。"""
+    for m in _UNIT_IDENT_RE.finditer(raw):
+        if m.group() in ABSOLUTE_TEMP_UNITS:
+            return m.group(), m.start()
+    return None
 
 
 # ---------------------------------------------------------------------------
