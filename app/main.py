@@ -1,4 +1,4 @@
-"""FastAPI 应用入口：POST /v1/evaluate、POST /v1/invert。"""
+"""FastAPI 应用入口：POST /v1/evaluate、POST /v1/invert、POST /v1/infer-unit。"""
 from __future__ import annotations
 
 import math
@@ -8,17 +8,33 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from .dimension import BASE_DIMENSIONS, infer_dimensions
 from .errors import EvalError
 from .evaluator import convert_result, evaluate, value_from_unit
 from .expression import parse_expression, variable_names
 from .invert import invert
-from .models import EvalRequest, EvalResponse, InvertRequest, InvertResponse
-from .units import ALLOWED_UNITS, VARIABLE_UNITS, parse_target
+from .models import (
+    DimensionExponents,
+    EvalRequest,
+    EvalResponse,
+    InferUnitRequest,
+    InferUnitResponse,
+    InvertRequest,
+    InvertResponse,
+)
+from .units import (
+    ABSOLUTE_TEMP_UNITS,
+    ALLOWED_UNITS,
+    VARIABLE_UNITS,
+    parse_target,
+    target_identifiers,
+)
 
 app = FastAPI(
     title="量纲公式求值 API",
-    version="1.1.0",
-    description="离线量纲公式求值：解析算术算式，按单位代数求值并换算到目标单位；支持目标值反求。",
+    version="1.2.0",
+    description="离线量纲公式求值：解析算术算式，按单位代数求值并换算到目标单位；"
+    "支持目标值反求与缺失单位的静态量纲推断。",
 )
 
 
@@ -136,4 +152,73 @@ def invert_endpoint(req: InvertRequest) -> InvertResponse:
         result=solution.result,
         result_unit=solution.result_unit,
         dimension=solution.dimension,
+    )
+
+
+@app.post("/v1/infer-unit", response_model=InferUnitResponse)
+def infer_unit_endpoint(req: InferUnitRequest) -> InferUnitResponse:
+    ast = parse_expression(req.expression)
+
+    # 待推断变量不能与已知变量重名；已知变量单位沿用变量单位表（额外允许 1）。
+    if req.unknown.name in req.variables:
+        raise EvalError(
+            "unknown_variable_conflict",
+            ["body", "unknown", "name"],
+            f"待推断变量 {req.unknown.name!r} 与已知变量重名",
+        )
+    known_units: dict[str, str] = {}
+    for name, var in req.variables.items():
+        if var.unit not in VARIABLE_UNITS:
+            raise EvalError.at_variable(
+                "unknown_unit",
+                name,
+                "unit",
+                f"变量 {name!r} 的单位 {var.unit!r} 不受支持，"
+                f"可用单位：{', '.join(sorted(VARIABLE_UNITS))}",
+            )
+        if var.unit in ABSOLUTE_TEMP_UNITS:
+            raise EvalError.at_variable(
+                "absolute_temperature",
+                name,
+                "unit",
+                f"变量 {name!r} 的单位 {var.unit!r} 是绝对温度单位，"
+                "静态量纲推断不接受绝对温度（K/degC/degF），"
+                "温差请使用 delta_K/delta_degC/delta_degF",
+            )
+        known_units[name] = var.unit
+
+    # 待推断变量必须在算式中出现；算式也不得引用其它未定义变量。
+    names = variable_names(ast)
+    if req.unknown.name not in names:
+        raise EvalError(
+            "unknown_not_in_expression",
+            ["body", "unknown", "name"],
+            f"待推断变量 {req.unknown.name!r} 未在算式中出现",
+        )
+    for name, pos in names.items():
+        if name != req.unknown.name and name not in known_units:
+            raise EvalError.at_expression(
+                "unknown_variable",
+                pos,
+                f"位置 {pos}：未知变量 {name!r}，已定义的变量："
+                f"{', '.join(sorted(set(known_units) | {req.unknown.name}))}",
+            )
+
+    # 目标单位沿用原单位式语法；其中不得含绝对温度单位 K/degC/degF。
+    target = parse_target(req.target_unit)
+    for unit_name, pos in target_identifiers(target.tree):
+        if unit_name in ABSOLUTE_TEMP_UNITS:
+            raise EvalError.at_target(
+                "absolute_temperature",
+                f"目标单位中的 {unit_name!r} 是绝对温度单位（位置 {pos}），"
+                "静态量纲推断不接受绝对温度；温差请使用 delta_K"
+                "（如 delta_K/s）",
+                pos,
+            )
+
+    unit, exponents = infer_dimensions(ast, known_units, req.unknown.name, target)
+    return InferUnitResponse(
+        name=req.unknown.name,
+        unit=unit,
+        exponents=DimensionExponents(**dict(zip(BASE_DIMENSIONS, exponents))),
     )

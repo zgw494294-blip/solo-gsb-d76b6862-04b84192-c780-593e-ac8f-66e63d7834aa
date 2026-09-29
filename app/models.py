@@ -82,3 +82,49 @@ class InvertResponse(BaseModel):
     result: float = Field(description="代入待求值后，按目标单位表示的实际结果")
     result_unit: str = Field(description="归一化后的目标单位")
     dimension: str = Field(description="结果量纲，如 [length] / [time]；无量纲为 dimensionless")
+
+
+class KnownVariable(BaseModel):
+    unit: str = Field(
+        min_length=1, description="已知变量的单位：单位表中的单个单位，或 1 表示无量纲"
+    )
+
+
+class InferUnknown(BaseModel):
+    name: str = Field(
+        min_length=1,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+        description="待推断变量名：合法标识符，须在算式中出现且不与已知变量重名",
+    )
+
+
+class InferUnitRequest(BaseModel):
+    expression: str = Field(
+        min_length=1,
+        description="算式：数字、变量、括号、一元正负与 + - * /；待推断变量须出现",
+        examples=["d / t"],
+    )
+    variables: dict[str, KnownVariable] = Field(
+        default_factory=dict, description="已知变量名 -> {unit}（只需单位，不需要数值）"
+    )
+    unknown: InferUnknown = Field(description="待推断变量的名称（单位由本接口推断）")
+    target_unit: str = Field(
+        min_length=1,
+        description="期望结果单位：沿用目标单位式语法；不得含 K/degC/degF 绝对温度单位",
+        examples=["m/s"],
+    )
+
+
+class DimensionExponents(BaseModel):
+    length: int = Field(description="长度（m）指数")
+    time: int = Field(description="时间（s）指数")
+    mass: int = Field(description="质量（kg）指数")
+    delta_K: int = Field(description="温差（delta_K）指数")
+
+
+class InferUnitResponse(BaseModel):
+    name: str = Field(description="待推断变量名")
+    unit: str = Field(description="用 m、s、kg、delta_K 组成的规范单位式；无量纲为 1")
+    exponents: DimensionExponents = Field(
+        description="长度、时间、质量、温差四个基础量纲的整数指数"
+    )

@@ -72,6 +72,7 @@ class TargetUnit:
     canonical: str                # 归一化后的单位式（保留用户单位符号）
     pint_unit: pint.Unit          # 对应的 Pint 单位
     absolute_unit: str | None     # 目标恰为单个绝对温度单位时为该单位名，否则 None
+    tree: object = None           # 解析后的单位式 AST（供静态推断遍历检查）
 
 
 @dataclass
@@ -219,6 +220,11 @@ def _walk(node):
         yield from _walk(node.base)
 
 
+def target_identifiers(tree) -> list[tuple[str, int]]:
+    """遍历目标单位式 AST，返回其中所有单位标识符 (名称, 位置)。"""
+    return [(n.name, n.pos) for n in _walk(tree) if isinstance(n, _UIdent)]
+
+
 def _build_unit(node) -> pint.Unit:
     if isinstance(node, _UIdent):
         return ureg.Unit(node.name)
@@ -327,4 +333,5 @@ def parse_target(
         canonical=_format_unit(tree),
         pint_unit=pint_unit,
         absolute_unit=absolute_unit,
+        tree=tree,
     )
